@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loyalty Ledger</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f5f6fa; margin: 0; padding: 24px; color: #222; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    h1 { margin-top: 0; }
+    .card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .balance { font-size: 48px; font-weight: 700; color: #2b6cb0; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input { padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+    button { padding: 8px 14px; border: 0; border-radius: 6px; background: #2b6cb0; color: #fff; cursor: pointer; }
+    button.secondary { background: #718096; }
+    .msg { margin-top: 10px; font-size: 14px; min-height: 18px; }
+    .ok { color: #2f855a; }
+    .err { color: #c53030; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+    td.earn { color: #2f855a; font-weight: 600; }
+    td.redeem { color: #c53030; font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Loyalty Ledger</h1>
+
+  <div class="card">
+    <div class="row">
+      <label>Member ID <input id="memberId" type="number" value="1" min="1" style="width:90px"></label>
+      <button onclick="refresh()">Load</button>
+    </div>
+    <p>Current balance</p>
+    <div class="balance" id="balance">–</div>
+    <div class="msg" id="loadMsg"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input id="points" type="number" placeholder="Points" min="1" style="width:110px">
+      <input id="reference" placeholder="Reference (e.g. order-42)">
+      <button onclick="act('earn')">Earn</button>
+      <button class="secondary" onclick="act('redeem')">Redeem</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="card">
+    <h3>History</h3>
+    <table>
+      <thead><tr><th>When</th><th>Type</th><th>Points</th><th>Reference</th></tr></thead>
+      <tbody id="history"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const memberUrl = () => `/members/${document.getElementById('memberId').value}`;
+
+  async function getJson(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return res.json();
+  }
+
+  async function refresh() {
+    const loadMsg = document.getElementById('loadMsg');
+    try {
+      const [balance, history] = await Promise.all([
+        getJson(`${memberUrl()}/balance`),
+        getJson(`${memberUrl()}/transactions?size=10&sort=createdAt,desc`)
+      ]);
+      document.getElementById('balance').textContent = balance.balance;
+      loadMsg.textContent = '';
+
+      const tbody = document.getElementById('history');
+      tbody.replaceChildren(...history.content.map(t => {
+        const tr = document.createElement('tr');
+        const cells = [new Date(t.createdAt).toLocaleString(), t.type, t.points, t.reference ?? ''];
+        cells.forEach((value, i) => {
+          const td = document.createElement('td');
+          td.textContent = value;
+          if (i === 1) td.className = t.type.toLowerCase();
+          tr.appendChild(td);
+        });
+        return tr;
+      }));
+    } catch (err) {
+      loadMsg.className = 'msg err';
+      loadMsg.textContent = err.message;
+    }
+  }
+
+  async function act(type) {
+    const msg = document.getElementById('msg');
+    const points = Number(document.getElementById('points').value);
+    if (!points || points < 1) {
+      msg.className = 'msg err';
+      msg.textContent = 'Enter a positive number of points.';
+      return;
+    }
+
+    const res = await fetch(`${memberUrl()}/${type}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        points,
+        reference: document.getElementById('reference').value || null,
+        idempotencyKey: crypto.randomUUID()
+      })
+    });
+
+    if (res.ok) {
+      msg.className = 'msg ok';
+      msg.textContent = `${type === 'earn' ? 'Earned' : 'Redeemed'} ${points} points.`;
+      refresh();
+    } else {
+      msg.className = 'msg err';
+      msg.textContent = res.status === 409 ? 'Not enough points to redeem.' : `Request failed (${res.status}).`;
+    }
+  }
+
+  refresh();
+</script>
+</body>
+</html>
